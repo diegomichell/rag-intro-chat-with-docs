@@ -1,38 +1,29 @@
 import os
 from dotenv import load_dotenv
 import chromadb
-from openai import OpenAI
 from chromadb.utils import embedding_functions
+from google import genai
+from google.genai import types
 
 # Load environment variables from .env file
 load_dotenv()
 
-openai_key = os.getenv("OPENAI_API_KEY")
+# GEMINI setup
+gemini_key = os.getenv("GOOGLE_API_KEY")
 
-openai_ef = embedding_functions.OpenAIEmbeddingFunction(
-    api_key=openai_key, model_name="text-embedding-3-small"
+# Instantiate Gemini client (per docs, e.g. https://ai.google.dev/gemini-api/docs/embeddings)
+client = genai.Client(api_key=gemini_key)
+
+gemini_ef = embedding_functions.GoogleGenaiEmbeddingFunction(
+    model_name="gemini-embedding-001"
 )
+
 # Initialize the Chroma client with persistence
 chroma_client = chromadb.PersistentClient(path="chroma_persistent_storage")
 collection_name = "document_qa_collection"
 collection = chroma_client.get_or_create_collection(
-    name=collection_name, embedding_function=openai_ef
+    name=collection_name, embedding_function=gemini_ef
 )
-
-
-client = OpenAI(api_key=openai_key)
-
-# resp = client.chat.completions.create(
-#     model="gpt-3.5-turbo",
-#     messages=[
-#         {"role": "system", "content": "You are a helpful assistant."},
-#         {
-#             "role": "user",
-#             "content": "What is human life expectancy in the United States?",
-#         },
-#     ],
-# )
-
 
 # Function to load documents from a directory
 def load_documents_from_directory(directory_path):
@@ -46,7 +37,6 @@ def load_documents_from_directory(directory_path):
                 documents.append({"id": filename, "text": file.read()})
     return documents
 
-
 # Function to split text into chunks
 def split_text(text, chunk_size=1000, chunk_overlap=20):
     chunks = []
@@ -56,7 +46,6 @@ def split_text(text, chunk_size=1000, chunk_overlap=20):
         chunks.append(text[start:end])
         start = end - chunk_overlap
     return chunks
-
 
 # Load documents from the directory
 directory_path = "./news_articles"
@@ -71,23 +60,20 @@ for doc in documents:
     for i, chunk in enumerate(chunks):
         chunked_documents.append({"id": f"{doc['id']}_chunk{i+1}", "text": chunk})
 
-# print(f"Split documents into {len(chunked_documents)} chunks")
-
-
-# Function to generate embeddings using OpenAI API
-def get_openai_embedding(text):
-    response = client.embeddings.create(input=text, model="text-embedding-3-small")
-    embedding = response.data[0].embedding
+# Generate embeddings for the document chunks using gemini client
+def get_gemini_embedding(text):
+    result = client.models.embed_content(
+        model="gemini-embedding-001",
+        contents=text,
+        config=types.EmbedContentConfig(task_type="SEMANTIC_SIMILARITY")
+    )
+    
     print("==== Generating embeddings... ====")
-    return embedding
+    return result.embeddings[0].values
 
-
-# Generate embeddings for the document chunks
 for doc in chunked_documents:
     print("==== Generating embeddings... ====")
-    doc["embedding"] = get_openai_embedding(doc["text"])
-
-# print(doc["embedding"])
+    doc["embedding"] = get_gemini_embedding(doc["text"])
 
 # Upsert documents with embeddings into Chroma
 for doc in chunked_documents:
@@ -96,23 +82,15 @@ for doc in chunked_documents:
         ids=[doc["id"]], documents=[doc["text"]], embeddings=[doc["embedding"]]
     )
 
-
 # Function to query documents
 def query_documents(question, n_results=2):
-    # query_embedding = get_openai_embedding(question)
     results = collection.query(query_texts=question, n_results=n_results)
-
     # Extract the relevant chunks
     relevant_chunks = [doc for sublist in results["documents"] for doc in sublist]
     print("==== Returning relevant chunks ====")
     return relevant_chunks
-    # for idx, document in enumerate(results["documents"][0]):
-    #     doc_id = results["ids"][0][idx]
-    #     distance = results["distances"][0][idx]
-    #     print(f"Found document chunk: {document} (ID: {doc_id}, Distance: {distance})")
 
-
-# Function to generate a response from OpenAI
+# Function to generate a response from Gemini
 def generate_response(question, relevant_chunks):
     context = "\n\n".join(relevant_chunks)
     prompt = (
@@ -121,27 +99,12 @@ def generate_response(question, relevant_chunks):
         "don't know. Use three sentences maximum and keep the answer concise."
         "\n\nContext:\n" + context + "\n\nQuestion:\n" + question
     )
-
-    response = client.chat.completions.create(
-        model="gpt-3.5-turbo",
-        messages=[
-            {
-                "role": "system",
-                "content": prompt,
-            },
-            {
-                "role": "user",
-                "content": question,
-            },
-        ],
-    )
-
-    answer = response.choices[0].message
+    model = genai.GenerativeModel('gemini-pro')
+    response = model.generate_content([{"role": "user", "parts": [prompt]}])
+    # The response is typically in .text (see genai docs for any updates)
+    answer = getattr(response, "text", str(response))
     return answer
 
-
-# Example query
-# query_documents("tell me about AI replacing TV writers strike.")
 # Example query and response generation
 question = "tell me about databricks"
 relevant_chunks = query_documents(question)

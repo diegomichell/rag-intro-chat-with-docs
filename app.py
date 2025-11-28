@@ -100,7 +100,7 @@ def generate_response(question, relevant_chunks):
         "\n\nContext:\n" + context + "\n\nQuestion:\n" + question
     )
     
-    response = client.models.generate_content(model='gemini-pro', contents=prompt)
+    response = client.models.generate_content(model='gemini-2.5-flash', contents=prompt)
 
     answer = response.text
     return answer

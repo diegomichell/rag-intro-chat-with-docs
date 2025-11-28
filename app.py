@@ -99,10 +99,10 @@ def generate_response(question, relevant_chunks):
         "don't know. Use three sentences maximum and keep the answer concise."
         "\n\nContext:\n" + context + "\n\nQuestion:\n" + question
     )
-    model = genai.GenerativeModel('gemini-pro')
-    response = model.generate_content([{"role": "user", "parts": [prompt]}])
-    # The response is typically in .text (see genai docs for any updates)
-    answer = getattr(response, "text", str(response))
+    
+    response = client.models.generate_content(model='gemini-pro', contents=prompt)
+
+    answer = response.text
     return answer
 
 # Example query and response generation
